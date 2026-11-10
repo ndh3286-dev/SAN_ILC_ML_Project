@@ -38,7 +38,9 @@ Controls are piecewise constant on N slices of width dt (GRAPE convention):
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import qutip as qt
@@ -299,6 +301,71 @@ class TwoQubitModel:
             if np.isfinite(Tphi[i]):
                 c.append(np.sqrt(2 / Tphi[i]) * self.n[i])
         return c
+
+    # ---- Piccolo.jl bridge ------------------------------------------------
+    # Control vector order used on the Julia side: u = [I1, I2, ux1, ux2, uy1, uy2]
+    PICCOLO_CONTROLS = ["I1", "I2", "ux1", "ux2", "uy1", "uy2"]
+
+    def export_piccolo_system(self, path) -> Path:
+        """Write the exact operators + tuning-curve parameters for piccolo/solve_cz.jl.
+
+        Operators already include the 2pi, so Piccolo works in rad/ns with
+        time in ns, identical to this module.
+        """
+        def mat(Q):
+            A = Q.full()
+            return {"re": A.real.tolist(), "im": A.imag.tolist()}
+
+        p = self.p
+        data = {
+            "n_levels": p.n_levels,
+            "f_max": self.f_max.tolist(),
+            "alpha": self.alpha.tolist(),
+            "asymmetry": self.asym.tolist(),
+            "flux_offset": self.phi_off.tolist(),
+            "J": p.J,
+            "M_pH": p.M.tolist(),
+            "phi0_pH_mA": PHI0_PH_MA,
+            "I_idle": p.I_idle.tolist(),
+            "f_idle": self.f_idle.tolist(),
+            "delta": self.delta,                       # rad/ns
+            "control_names": self.PICCOLO_CONTROLS,
+            "ops": {
+                "H_anharm": mat(self.H_anharm),
+                "H_ex": mat(self.H_ex),
+                "H_z": [mat(h) for h in self.H_z],
+                "H_x": [mat(h) for h in self.H_x],
+                "H_y": [mat(h) for h in self.H_y],
+            },
+        }
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+        return path
+
+    @staticmethod
+    def load_piccolo_result(path) -> tuple[Controls, dict]:
+        """Read a pulse written by piccolo/solve_cz.jl -> (Controls, metadata).
+
+        Piccolo's ZeroOrderPulse holds u[:, k] on [t_k, t_{k+1}); the last
+        knot only marks the end time, so N knots give N-1 slices.
+        """
+        d = json.loads(Path(path).read_text())
+        names = d["control_names"]
+        u = np.asarray(d["u"], dtype=float)            # (n_controls, N_knots)
+        t = np.asarray(d["times"], dtype=float)
+        dts = np.diff(t)
+        if not np.allclose(dts, dts[0], rtol=1e-6):
+            raise ValueError("Controls needs equal timesteps; solve with timesteps_all_equal=true")
+        row = {n: u[names.index(n), :-1] for n in names}
+        ctrl = Controls(float(dts[0]),
+                        np.stack([row["I1"], row["I2"]]),
+                        np.stack([row["ux1"], row["ux2"]]),
+                        np.stack([row["uy1"], row["uy2"]]))
+        meta = {k: v for k, v in d.items() if k not in ("u", "times")}
+        if "U_final" in d:
+            meta["U_final"] = np.asarray(d["U_final"]["re"]) + 1j * np.asarray(d["U_final"]["im"])
+        return ctrl, meta
 
     # ---- states and figures of merit --------------------------------------
     def basis(self, n1: int, n2: int) -> qt.Qobj:

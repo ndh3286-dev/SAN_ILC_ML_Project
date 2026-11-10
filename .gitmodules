@@ -1,0 +1,3 @@
+[submodule "external/Piccolo.jl"]
+	path = external/Piccolo.jl
+	url = https://github.com/harmoniqs/Piccolo.jl.git
