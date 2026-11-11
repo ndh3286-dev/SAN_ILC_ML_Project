@@ -279,14 +279,14 @@ class TwoQubitModel:
             return qt.Qobj(U, dims=[self.dims, self.dims])
         if method == "ode":
             return qt.propagator(self.hamiltonian(ctrl), [0, ctrl.duration],
-                                 options={"max_step": ctrl.dt})[-1]
+                                 options={"max_step": ctrl.dt, "nsteps": 10**7})[-1]
         raise ValueError("method must be 'pwc' or 'ode'")
 
     def evolve(self, ctrl: Controls, state0: qt.Qobj, tlist=None, c_ops=None,
                e_ops=None, **options):
         """Integrate with sesolve (no c_ops, ket) or mesolve. Returns a QuTiP Result."""
         tlist = ctrl.t_edges if tlist is None else tlist
-        opts = {"max_step": ctrl.dt, "store_states": True, **options}
+        opts = {"max_step": ctrl.dt, "nsteps": 10**7, "store_states": True, **options}
         H = self.hamiltonian(ctrl)
         if not c_ops and state0.isket:
             return qt.sesolve(H, state0, tlist, e_ops=e_ops, options=opts)
