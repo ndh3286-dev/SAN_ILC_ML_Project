@@ -249,13 +249,14 @@ class TwoQubitModel:
         Ex = self.H_ex.full()
         ops = [(self.H_z[i].full(), self.H_x[i].full(), self.H_y[i].full()) for i in range(2)]
         ph = np.exp(1j * self.delta * ctrl.t_mid)
-        H = np.empty((ctrl.n_slices, *A.shape), dtype=complex)
-        for k in range(ctrl.n_slices):
-            Hk = A + ph[k] * Ex + np.conj(ph[k]) * Ex.conj().T
-            for i, (Hz, Hx, Hy) in enumerate(ops):
-                Hk = Hk + Delta[i, k] * Hz + ctrl.ux[i, k] * Hx + ctrl.uy[i, k] * Hy
-            H[k] = Hk
-        return H
+        # coefficient (N, n_terms) x operator stack (n_terms, D, D), vectorized over slices
+        coeffs = [ph, np.conj(ph)]
+        mats = [Ex, Ex.conj().T]
+        for i, (Hz, Hx, Hy) in enumerate(ops):
+            coeffs += [Delta[i], ctrl.ux[i], ctrl.uy[i]]
+            mats += [Hz, Hx, Hy]
+        H = np.einsum("nt,tij->nij", np.stack(coeffs, axis=1), np.stack(mats))
+        return H + A[None]
 
     def control_operators(self) -> dict[str, list[qt.Qobj]]:
         """Control Hamiltonians, each multiplying a GHz-valued coefficient.
